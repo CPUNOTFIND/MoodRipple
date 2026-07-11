@@ -18,7 +18,7 @@ from .moodripple.service import MoodService, now_iso
 from .moodripple.store import StateStore
 
 
-@register("moodripple", "MoodRipple contributors", "全局心情、关系记忆与克制主动回复", "1.1.3")
+@register("moodripple", "MoodRipple contributors", "全局心情、关系记忆与克制主动回复", "1.1.4")
 class MoodRipplePlugin(Star):
     """A non-invasive emotional layer; it never replaces the configured persona."""
 
@@ -138,6 +138,22 @@ class MoodRipplePlugin(Star):
         labels = await self.service.apply_event(generated)
         label_text = "、".join(labels or []) or "（词条总结失败）"
         yield event.plain_result(f"已生成事件：{generated.get('summary', '')}\n事件后词条：{label_text}")
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @mood_debug.command("flow")
+    async def debug_flow(self, event: AstrMessageEvent, user_id: str = ""):
+        """端到端测试随机事件生成、心情更新与事件锚定主动消息。"""
+        target = user_id or str(event.get_sender_id())
+        generated = await self.service.create_event(await self._anonymous_atmosphere())
+        if not generated:
+            yield event.plain_result("测试流程停止：随机事件生成失败。")
+            return
+        labels = await self.service.apply_event(generated)
+        outcome = await self._proactive_for_user(target, generated, force=True)
+        label_text = "、".join(labels or []) or "（词条总结失败）"
+        yield event.plain_result(
+            f"测试流程完成\n事件：{generated.get('summary', '')}\n词条：{label_text}\n主动消息：{outcome}"
+        )
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @mood_debug.command("set")
