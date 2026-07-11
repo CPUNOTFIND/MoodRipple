@@ -18,7 +18,7 @@ from .moodripple.service import MoodService, now_iso
 from .moodripple.store import StateStore
 
 
-@register("moodripple", "MoodRipple contributors", "全局心情、关系记忆与克制主动回复", "1.1.7")
+@register("moodripple", "MoodRipple contributors", "全局心情、关系记忆与克制主动回复", "1.1.8")
 class MoodRipplePlugin(Star):
     """A non-invasive emotional layer; it never replaces the configured persona."""
 
@@ -346,8 +346,8 @@ class MoodRipplePlugin(Star):
         now = datetime.now().astimezone()
         active_window = timedelta(minutes=max(1, int(self.config.get("session_awareness_minutes", 30))))
         last_seen = self._parse_time(user.get("last_seen", ""))
-        if not force and last_seen and now - last_seen <= active_window:
-            return "目标处于近期活跃会话，事件话题已在队列中等待自然引入。"
+        if last_seen and now - last_seen <= active_window:
+            return "目标处于近期活跃会话，已跳过单独发送；事件话题会在当前对话中自然引入。"
         cooldown = timedelta(minutes=max(1, int(self.config.get("proactive_cooldown_minutes", 720))))
         last_sent = self._parse_time(user.get("last_proactive_at", ""))
         if not force and last_sent and now - last_sent < cooldown:
