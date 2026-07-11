@@ -15,7 +15,7 @@
 - `/mooddebug state`：管理员查看内部心情、词条和用户记录数量。
 - `/mooddebug labels`：管理员立即让 AI 重生成心情词条。
 - `/mooddebug event`：管理员立即生成事件，并在应用事件后重新总结词条。
-- `/mooddebug flow [QQ号]`：管理员端到端测试“随机事件 → 心情/词条 → 主动消息”；省略 QQ 号时以命令发送者为目标。
+- `/mooddebug flow`：管理员端到端测试“随机事件 → 心情/词条 → 主动消息”；会向主动名单中的每一位用户依次尝试发送。
 - `/mooddebug set <值>`：管理员覆盖调试心情值（自动限制在 `-100..100`）。
 - `/mooddebug affection <QQ号>`：管理员查询指定用户的好感度。
 - `/mooddebug setaffection <QQ号> <值>`：管理员设置指定用户的好感度。
