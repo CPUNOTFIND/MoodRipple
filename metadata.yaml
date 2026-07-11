@@ -2,7 +2,7 @@ name: astrbot_plugin_moodripple
 display_name: 心绪微澜（MoodRipple）
 desc: 让 AstrBot 拥有会随对话与时间自然流动的全局心情、关系记忆与克制的主动问候。
 short_desc: 有心情、关系记忆和主动问候的 AstrBot QQ 插件。
-version: v1.1.1
+version: v1.1.2
 author: MoodRipple contributors
 repo: https://github.com/CPUNOTFIND/MoodRipple
 astrbot_version: ">=4.23.6,<5"

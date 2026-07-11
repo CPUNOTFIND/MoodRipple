@@ -18,7 +18,7 @@ from .moodripple.service import MoodService, now_iso
 from .moodripple.store import StateStore
 
 
-@register("moodripple", "MoodRipple contributors", "全局心情、关系记忆与克制主动回复", "1.1.1")
+@register("moodripple", "MoodRipple contributors", "全局心情、关系记忆与克制主动回复", "1.1.2")
 class MoodRipplePlugin(Star):
     """A non-invasive emotional layer; it never replaces the configured persona."""
 
@@ -341,13 +341,16 @@ class MoodRipplePlugin(Star):
 
     async def _proactive_message(self, event: dict[str, Any], user: dict[str, Any]) -> str | None:
         state = await self.store.snapshot()
+        context_excerpt = await self.service.ai.recent_context_for_origin(str(user.get("last_origin", "")))
         result = await self.service.ai.json(
-            "生成一条克制、自然、不施压的中文主动消息。消息必须以当前事件为唯一核心，"
+            "生成一条克制、自然、不施压的中文主动消息。参考优先级必须是：目标用户的近期上下文第一，"
+            "当前事件第二，当前心情与关系第三（只影响措辞）。任何陌生人样本都与目标无关，绝不可使用。"
+            "消息必须以当前事件为唯一核心，"
             "明确提到事件中的一个独特细节，或由该细节自然抛出 topic_intent；禁止发送脱离事件的泛用问候。"
             "关系与心情只可影响措辞，不可取代事件内容。根据情境选择关怀、分享、轻微求助或话题延续之一。"
             "不得透露内部数值、好感度、用户资料、系统或评估机制。返回 JSON："
             '{"event_anchor": "消息中使用的事件独特细节", "message": "最多90字"}。输入：'
-            + str({"event": event.get("summary", ""), "topic": event.get("topic_intent", ""), "mood": state["mood"], "relationship": user.get("relationship", ""), "affection": user.get("affection", 0)})
+            + str({"target_context": context_excerpt, "event": event.get("summary", ""), "topic": event.get("topic_intent", ""), "mood": state["mood"], "relationship": user.get("relationship", ""), "affection": user.get("affection", 0)})
         )
         text = str(result.get("message", "")).strip() if result else ""
         return text[:180] or None

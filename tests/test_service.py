@@ -124,6 +124,6 @@ class DebugServiceTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("bot_persona", ai.prompts[-1])
             self.assertIn("话题引子", ai.prompts[-1])
             self.assertIn("线上社交场景", ai.prompts[-1])
-            self.assertIn("chat_references", ai.prompts[-1])
+            self.assertIn("stranger_reference_samples", ai.prompts[-1])
             self.assertIn("上一件事件", ai.prompts[-1])
             self.assertIn("current_mood", ai.prompts[-1])

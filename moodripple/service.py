@@ -271,7 +271,7 @@ class MoodService:
             for item in reversed(state["events"])
             if item.get("type") == "daily_event"
         ][:5]
-        chat_references = await self.ai.sample_anonymous_chat_references(state["users"])
+        stranger_reference_samples = await self.ai.sample_anonymous_chat_references(state["users"])
         result = await self.ai.json(
             "你是一个独立个体的近况写作者。角色是有自身生活感与社交习惯的个体，不要突出或提及机器人、模型、算法。"
             "输入中的 bot_persona 是 AstrBot 当前实际使用的人格设定，包含人格名称与系统提示词；"
@@ -287,8 +287,9 @@ class MoodService:
             "可按配置有优雅留白的暧昧氛围，不得出现露骨性描写、性行为、裸露、性胁迫，"
             "也不得假定用户年龄、关系或同意。"
             "recent_events 按从新到旧排列，第一条必须是最主要的时间线参考；不得暴露用户信息、原话或身份。"
-            "chat_references 是从随机抽取的一到两段对话脱敏得到的备选灵感，高好感用户被抽中的概率更高；"
-            "只能借鉴其抽象互动倾向，绝不可复述其中任何内容。"
+            "stranger_reference_samples 是陌生人发言经脱敏后的随机样本，高好感用户仅影响抽样概率。"
+            "它们与当前用户无关，只能作为极弱的创作备选，不能成为事件主线、关系依据、称呼或记忆，"
+            "也不能压过最近事件、当前心情、当前氛围和人格设定。"
             "topic_intent 必须说明如何基于该事件自然开启开放话题。只输出 JSON，不要 markdown："
             '{"description": "第一人称内心事件，80到160字", "delta": number(-15..15), '
             '"topic_intent": "最多60字"}。输入：'
@@ -300,7 +301,7 @@ class MoodService:
                 "flirtiness": flirtiness,
                 "recent_events": recent_events,
                 "anonymous_atmosphere": atmosphere,
-                "chat_references": chat_references,
+                "stranger_reference_samples": stranger_reference_samples,
             })
         )
         if not result:

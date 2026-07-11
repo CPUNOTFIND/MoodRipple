@@ -61,6 +61,10 @@ class MoodAI:
                 references.append(str(summary["summary"])[:120])
         return references
 
+    async def recent_context_for_origin(self, origin: str) -> str:
+        """Return recent context only for the current target conversation."""
+        return await self._recent_conversation_text(origin)
+
     async def _recent_conversation_text(self, origin: str) -> str:
         try:
             manager = self.context.conversation_manager
