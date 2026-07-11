@@ -218,36 +218,59 @@ class MoodService:
     async def create_event(self, atmosphere: str = "") -> dict[str, Any] | None:
         state = await self.store.snapshot()
         persona = self.ai.default_persona_context()
+        flirtiness = min(3, max(0, int(self.config.get("event_flirtiness", 1))))
+        recent_events = [
+            {"at": item.get("at", ""), "summary": item.get("summary", "")}
+            for item in reversed(state["events"])
+            if item.get("type") == "daily_event"
+        ][:5]
+        chat_references = await self.ai.sample_anonymous_chat_references(state["users"])
         result = await self.ai.json(
-            "基于提供的 AstrBot 人格设定，生成一件符合该人格会经历或在意的虚构日常事件。"
-            "事件必须是生动、具体、已经发生的小事：写出明确场景、正在做的动作、至少两个可感知细节"
-            "（物件、声音、光线、天气或身体感受等）以及事情如何收束。"
-            "不要写抽象的情绪概述、泛泛的日常感想或真实世界未经证实的消息。"
-            "事件只能温和影响语气，不能改写人格设定。返回 JSON："
-            '{"summary": "具体事件，80到160字，不含真实人物或私密聊天内容", "mood_delta": number(-20..20), '
-            '"topic_intent": "最多60字"}。'
-            "群体氛围若提供，仅可作为完全匿名的抽象灵感，绝不可复述聊天："
+            "你是一个独立个体的近况写作者。角色是有自身生活感与社交习惯的个体，不要突出或提及机器人、模型、算法。"
+            "输入中的 bot_persona 是 AstrBot 当前实际使用的人格设定，包含人格名称与系统提示词；"
+            "它是本次创作的最高角色约束，事件的视角、用词、关注点和情绪反应必须服从它。"
+            "根据当前时间、心情、氛围和参考信息，为角色创造一件刚刚发生的具体小事。"
+            "它必须是主动找用户聊天的强话题引子，像一句说到一半的话，诱使对方自然追问或分享。"
+            "优先发生在具体的线上社交场景，例如某个对话框、未发送的语音草稿、游戏房间、链接、图片或消息通知；"
+            "现实场景也可使用，但必须能自然成为一次线上聊天的开场。"
+            "使用第一人称、符合人格的口吻，写成带细节的微日记。必须交代正在何处、碰到了什么具体对象、做了什么动作、"
+            "发生了什么变化或留下什么未完结果；若去掉这些细节后可套用到任何一天，就说明事件不合格。"
+            "禁止信息海、数据流、算法波动等虚无缥缈的拟物化描写，也不要只说‘忽然有点怎样’。"
+            "情绪可以是开心、寂寞、吃醋、悸动、疲惫、顽皮或想使坏等，但必须合理源自当前心情。"
+            "可按配置有优雅留白的暧昧氛围，不得出现露骨性描写、性行为、裸露、性胁迫，"
+            "也不得假定用户年龄、关系或同意。"
+            "recent_events 按从新到旧排列，第一条必须是最主要的时间线参考；不得暴露用户信息、原话或身份。"
+            "chat_references 是从随机抽取的一到两段对话脱敏得到的备选灵感，高好感用户被抽中的概率更高；"
+            "只能借鉴其抽象互动倾向，绝不可复述其中任何内容。"
+            "topic_intent 必须说明如何基于该事件自然开启开放话题。只输出 JSON，不要 markdown："
+            '{"description": "第一人称内心事件，80到160字", "delta": number(-15..15), '
+            '"topic_intent": "最多60字"}。输入：'
             + str({
                 "time": now_iso(),
-                "mood": state["mood"],
-                "labels": state["labels"],
-                "persona": persona,
+                "current_mood": state["mood"],
+                "tags": state["labels"],
+                "bot_persona": persona,
+                "flirtiness": flirtiness,
+                "recent_events": recent_events,
                 "anonymous_atmosphere": atmosphere,
+                "chat_references": chat_references,
             })
         )
-        if result is None:
+        if not result:
             return None
         try:
-            delta = float(result.get("mood_delta", 0))
+            delta = int(result.get("delta", 0))
         except (TypeError, ValueError):
             return None
-        result["mood_delta"] = delta
-        return result
+        description = str(result.get("description", "")).strip()
+        if not description:
+            return None
+        return {"summary": description[:400], "delta": max(-15, min(15, delta)), "topic_intent": str(result.get("topic_intent", ""))[:120]}
 
     async def apply_event(self, event: dict[str, Any]) -> list[str] | None:
-        """Apply an event first, then summarize labels from its resulting mood."""
+        """Apply the AI-generated event delta, then refresh labels from the result."""
         await self.apply_assessment("__world__", {
-            "mood_delta": event["mood_delta"], "affection_delta": 0,
+            "mood_delta": event.get("delta", 0), "affection_delta": 0,
             "relationship_summary": "", "next_hint": str(event.get("summary", "")),
             "labels": [], "self_reflection": "", "self_adjustment": 0,
         }, "daily_event")

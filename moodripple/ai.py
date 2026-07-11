@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import random
 from typing import Any
 
 
@@ -32,6 +33,58 @@ class MoodAI:
             return {"name": name[:120], "prompt": prompt[:6000]}
         except Exception:
             return {"name": "当前默认人格", "prompt": ""}
+
+    async def sample_anonymous_chat_references(self, users: dict[str, Any]) -> list[str]:
+        """Sample one or two conversations by affection, then retain only anonymous themes."""
+        candidates = [user for user in users.values() if isinstance(user, dict) and user.get("last_origin")]
+        if not candidates:
+            return []
+        selected: list[dict[str, Any]] = []
+        pool = candidates[:]
+        for _ in range(random.randint(1, min(2, len(pool)))):
+            weights = [max(1.0, float(item.get("affection", 0)) + 101.0) for item in pool]
+            chosen = random.choices(pool, weights=weights, k=1)[0]
+            selected.append(chosen)
+            pool.remove(chosen)
+        references: list[str] = []
+        for user in selected:
+            text = await self._recent_conversation_text(str(user["last_origin"]))
+            if not text:
+                continue
+            summary = await self.json(
+                "将下面的私密对话临时抽象成一个完全匿名的创作备选主题。"
+                "只输出 JSON：{\"summary\": \"最多60字\"}。严禁复述原话、姓名、QQ号、身份、"
+                "具体经历或任何可识别细节；输出只可描述模糊的聊天互动倾向或话题类型。对话："
+                + text
+            )
+            if summary and str(summary.get("summary", "")).strip():
+                references.append(str(summary["summary"])[:120])
+        return references
+
+    async def _recent_conversation_text(self, origin: str) -> str:
+        try:
+            manager = self.context.conversation_manager
+            conversation_id = await manager.get_curr_conversation_id(origin)
+            if not conversation_id:
+                return ""
+            conversation = await manager.get_conversation(origin, conversation_id)
+            history = json.loads(conversation.history)
+            if not isinstance(history, list):
+                return ""
+            chunks: list[str] = []
+            for item in history[-6:]:
+                if not isinstance(item, dict):
+                    continue
+                content = item.get("content", "")
+                if isinstance(content, str):
+                    chunks.append(content)
+                elif isinstance(content, list):
+                    for part in content:
+                        if isinstance(part, dict) and isinstance(part.get("text"), str):
+                            chunks.append(part["text"])
+            return "\n".join(chunks[-4:])[:1600]
+        except Exception:
+            return ""
 
     async def json(self, prompt: str) -> dict[str, Any] | None:
         """Ask the configured provider for an object, returning None on a bad response."""

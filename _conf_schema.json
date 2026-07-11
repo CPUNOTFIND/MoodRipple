@@ -5,6 +5,7 @@
   "max_emotion_labels": {"type": "int", "default": 4, "description": "词条上限", "hint": "AI 为当前心情保留的最大情绪词条数。", "obvious_hint": true},
   "event_time_windows": {"type": "list", "default": ["09:00-11:30", "14:00-17:30", "20:00-22:30"], "description": "事件时段", "hint": "每天随机事件可出现的本地时间窗口，格式为 HH:MM-HH:MM。", "obvious_hint": true},
   "max_daily_events": {"type": "int", "default": 2, "description": "每日事件数", "hint": "一天内最多生成多少个 AI 随机情绪事件。", "obvious_hint": true},
+  "event_flirtiness": {"type": "int", "default": 1, "description": "暧昧强度", "hint": "事件的聊天张力：0 为普通，1 为俏皮，2 为轻度暧昧，3 为更强的含蓄成人氛围。所有级别均禁止露骨性内容及任何年龄或同意假设。", "obvious_hint": true},
   "chat_atmosphere_ratio": {"type": "float", "default": 0.35, "description": "氛围参考率", "hint": "随机事件参考已提炼的匿名群聊氛围摘要的概率，范围 0 到 1。", "obvious_hint": true},
   "proactive_user_ids": {"type": "list", "default": [], "description": "主动名单", "hint": "允许机器人主动联系的 QQ 号。目标必须至少与机器人说过一次话，才能保存可发送会话。", "obvious_hint": true},
   "proactive_probability": {"type": "float", "default": 0.35, "description": "主动概率", "hint": "每个随机事件后尝试主动联系名单用户的概率，范围 0 到 1。", "obvious_hint": true},
