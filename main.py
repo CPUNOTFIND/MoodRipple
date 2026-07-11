@@ -18,7 +18,7 @@ from .moodripple.service import MoodService, now_iso
 from .moodripple.store import StateStore
 
 
-@register("moodripple", "MoodRipple contributors", "全局心情、关系记忆与克制主动回复", "1.0.11")
+@register("moodripple", "MoodRipple contributors", "全局心情、关系记忆与克制主动回复", "1.1.0")
 class MoodRipplePlugin(Star):
     """A non-invasive emotional layer; it never replaces the configured persona."""
 
@@ -103,6 +103,19 @@ class MoodRipplePlugin(Star):
         state = await self.store.snapshot()
         labels = "、".join(str(item) for item in state.get("labels", [])) or "（无）"
         yield event.plain_result(f"MoodRipple 调试状态\n心情：{state['mood']}\n标签：{labels}\n用户记录：{len(state['users'])}")
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @mood_debug.command("dashboard")
+    async def debug_dashboard(self, event: AstrMessageEvent):
+        """查看事件、主动消息和关系里程碑的管理员仪表盘。"""
+        data = await self.service.dashboard()
+        milestones = "；".join(str(item.get("summary", "")) for item in data["milestones"]) or "暂无"
+        yield event.plain_result(
+            f"MoodRipple 仪表盘\n心情：{data['mood']}  标签：{'、'.join(data['labels']) or '无'}\n"
+            f"用户：{data['users']}  待用话题：{data['topics']}\n"
+            f"主动消息：{data['proactive_sent']}  已获回复：{data['proactive_replies']}\n"
+            f"最近关系里程碑：{milestones}"
+        )
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @mood_debug.command("labels")
@@ -308,8 +321,7 @@ class MoodRipplePlugin(Star):
         active_window = timedelta(minutes=max(1, int(self.config.get("session_awareness_minutes", 30))))
         last_seen = self._parse_time(user.get("last_seen", ""))
         if not force and last_seen and now - last_seen <= active_window:
-            await self.store.mutate(lambda current: current["users"][user_id].update({"pending_topic": str(event.get("topic_intent", ""))[:100]}))
-            return "目标处于近期活跃会话，已缓存话题等待自然引入。"
+            return "目标处于近期活跃会话，事件话题已在队列中等待自然引入。"
         cooldown = timedelta(minutes=max(1, int(self.config.get("proactive_cooldown_minutes", 720))))
         last_sent = self._parse_time(user.get("last_proactive_at", ""))
         if not force and last_sent and now - last_sent < cooldown:
@@ -320,6 +332,7 @@ class MoodRipplePlugin(Star):
         try:
             await self.context.send_message(str(user["last_origin"]), MessageChain().message(message))
             await self.store.mutate(lambda current: current["users"][user_id].update({"last_proactive_at": now_iso()}))
+            await self.service.record_proactive_result(user_id, event)
             return f"已向 {user_id} 发起主动消息。"
         except Exception as exc:
             logger.warning("MoodRipple proactive message was not sent: %s", exc)

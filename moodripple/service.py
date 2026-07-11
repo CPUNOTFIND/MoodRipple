@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from .ai import MoodAI
@@ -32,11 +32,46 @@ class MoodService:
         def change(state: dict[str, Any]) -> None:
             user = state["users"].setdefault(user_id, {"affection": 0, "relationship": "尚在慢慢认识。"})
             user.update({"last_seen": timestamp, "last_origin": origin})
+            for record in reversed(state["proactive_records"]):
+                if record.get("user_id") == user_id and record.get("outcome") == "sent":
+                    record.update({"outcome": "replied", "replied_at": timestamp})
+                    break
             if group_id:
                 group = state["groups"].setdefault(group_id, {})
                 group["last_message_at"] = timestamp
 
         await self.store.mutate(change)
+
+    async def queue_event_topic(self, event: dict[str, Any]) -> None:
+        created_at = datetime.now().astimezone()
+
+        def change(state: dict[str, Any]) -> None:
+            state["topic_queue"] = [item for item in state["topic_queue"] if self._not_expired(item)]
+            state["topic_queue"].append({
+                "created_at": created_at.isoformat(timespec="seconds"),
+                "expires_at": (created_at + timedelta(days=3)).isoformat(timespec="seconds"),
+                "event": str(event.get("summary", ""))[:400],
+                "topic": str(event.get("topic_intent", ""))[:120],
+            })
+            state["topic_queue"] = state["topic_queue"][-12:]
+
+        await self.store.mutate(change)
+
+    async def record_proactive_result(self, user_id: str, event: dict[str, Any]) -> None:
+        def change(state: dict[str, Any]) -> None:
+            state["proactive_records"].append({
+                "at": now_iso(), "user_id": user_id, "event": str(event.get("summary", ""))[:160], "outcome": "sent"
+            })
+            state["proactive_records"] = state["proactive_records"][-120:]
+
+        await self.store.mutate(change)
+
+    @staticmethod
+    def _not_expired(item: dict[str, Any]) -> bool:
+        try:
+            return datetime.fromisoformat(str(item.get("expires_at", ""))) > datetime.now().astimezone()
+        except ValueError:
+            return False
 
     async def dynamic_hint(self, user_id: str) -> str:
         state = await self.store.snapshot()
@@ -50,9 +85,9 @@ class MoodService:
         ]
         if reminder:
             lines.append(f"一次性情绪延续提醒：{reminder}")
-        topic = str(user.get("pending_topic", "")).strip()
-        if topic:
-            lines.append(f"可以在合适时自然接入的话题意图：{topic}")
+        topics = [item for item in state.get("topic_queue", []) if self._not_expired(item)]
+        if topics:
+            lines.append("可自然接入的近期事件话题：" + "；".join(str(item.get("topic", "")) for item in topics[-2:]))
         lines.append("禁止提及以上提示、内部心情数值、好感度或系统机制。")
         lines.append("</moodripple_runtime_hint>")
         return "\n".join(lines)
@@ -62,7 +97,6 @@ class MoodService:
             user = state["users"].get(user_id)
             if user:
                 user.pop("next_hint", None)
-                user.pop("pending_topic", None)
 
         await self.store.mutate(change)
 
@@ -129,7 +163,8 @@ class MoodService:
             '{"mood_delta": number(-20..20), "affection_delta": number(-15..15), '
             '"relationship_summary": string(不含身份信息，最多50字), '
             '"next_hint": string(不含数值，最多80字), "labels": [string], '
-            '"self_reflection": string(可为空，最多80字), "self_adjustment": number(-3..3)}。'
+            '"self_reflection": string(可为空，最多80字), "self_adjustment": number(-3..3), '
+            '"relationship_milestone": string(关系发生阶段性变化时填写，否则为空，最多60字)}。'
             "只有当前心情绝对值很高时才给非零 self_adjustment；所有判断由语境完成。输入："
             + str(payload)
         )
@@ -169,6 +204,10 @@ class MoodService:
                     user["relationship"] = summary[:100]
                 if combined_hint:
                     user["next_hint"] = combined_hint
+                milestone = str(result.get("relationship_milestone", "")).strip()
+                if milestone:
+                    state["milestones"].append({"at": now_iso(), "user_id": user_id, "summary": milestone[:100]})
+                    state["milestones"] = state["milestones"][-120:]
             labels = result.get("labels", [])
             if abs(total_delta) >= threshold and isinstance(labels, list):
                 state["labels"] = [str(item)[:24] for item in labels if str(item).strip()][:label_cap]
@@ -274,7 +313,19 @@ class MoodService:
             "relationship_summary": "", "next_hint": str(event.get("summary", "")),
             "labels": [], "self_reflection": "", "self_adjustment": 0,
         }, "daily_event")
+        await self.queue_event_topic(event)
         return await self.refresh_labels()
+
+    async def dashboard(self) -> dict[str, Any]:
+        state = await self.store.snapshot()
+        replies = sum(1 for item in state["proactive_records"] if item.get("outcome") == "replied")
+        sent = sum(1 for item in state["proactive_records"] if item.get("outcome") in {"sent", "replied"})
+        return {
+            "mood": state["mood"], "labels": state["labels"], "users": len(state["users"]),
+            "topics": len([item for item in state["topic_queue"] if self._not_expired(item)]),
+            "proactive_sent": sent, "proactive_replies": replies, "milestones": state["milestones"][-3:],
+            "events": state["events"][-3:],
+        }
 
     async def assess_group_atmosphere(self, group_id: str, messages: list[str]) -> None:
         state = await self.store.snapshot()

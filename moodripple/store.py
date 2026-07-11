@@ -32,6 +32,9 @@ class StateStore:
             "events": [],
             "event_schedule": {},
             "daily_stats": {},
+            "topic_queue": [],
+            "proactive_records": [],
+            "milestones": [],
             "users": {},
             "groups": {},
             "journals": [],
@@ -53,7 +56,7 @@ class StateStore:
         state = self._empty_state()
         state.update(loaded)
         state["mood"] = int(clamp(float(state.get("mood", self.initial_mood))))
-        for key in ("events", "labels", "journals"):
+        for key in ("events", "labels", "journals", "topic_queue", "proactive_records", "milestones"):
             if not isinstance(state.get(key), list):
                 state[key] = []
         for key in ("users", "groups", "event_schedule", "daily_stats"):

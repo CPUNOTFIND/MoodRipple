@@ -95,6 +95,20 @@ class DebugServiceTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(affection, -100)
             self.assertTrue(relationship)
 
+    async def test_dashboard_tracks_event_topics_and_proactive_replies(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = StateStore(Path(directory) / "state.json", 0)
+            await store.load()
+            service = MoodService(store, FakeAI(), {})
+            event = {"summary": "一件可聊的事", "topic_intent": "问问对方会怎么想"}
+            await service.queue_event_topic(event)
+            await service.record_proactive_result("123", event)
+            await service.record_seen("123", "qq:private:123")
+            dashboard = await service.dashboard()
+            self.assertEqual(dashboard["topics"], 1)
+            self.assertEqual(dashboard["proactive_sent"], 1)
+            self.assertEqual(dashboard["proactive_replies"], 1)
+
     async def test_event_prompt_contains_default_persona_and_requires_concrete_event(self):
         with tempfile.TemporaryDirectory() as directory:
             store = StateStore(Path(directory) / "state.json", 0)
