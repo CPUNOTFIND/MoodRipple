@@ -43,6 +43,17 @@ class ReferenceAI(MoodAI):
         return {"summary": "匿名的轻松互动倾向"}
 
 
+class JsonResponseTests(unittest.IsolatedAsyncioTestCase):
+    async def test_json_accepts_a_fenced_object_from_provider(self):
+        class Provider:
+            async def text_chat(self, **kwargs):
+                return type("Response", (), {"completion_text": "```json\n{\"labels\": [\"期待\"]}\n```"})()
+
+        context = type("Context", (), {"get_using_provider": lambda self: Provider()})()
+        result = await MoodAI(context, {}).json("测试")
+        self.assertEqual(result, {"labels": ["期待"]})
+
+
 class ConversationReferenceTests(unittest.IsolatedAsyncioTestCase):
     async def test_conversation_reference_is_anonymized_before_event_creation(self):
         history = json.dumps([{"role": "user", "content": "一段不应被复述的私人文字"}])

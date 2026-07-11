@@ -18,7 +18,7 @@ from .moodripple.service import MoodService, now_iso
 from .moodripple.store import StateStore
 
 
-@register("moodripple", "MoodRipple contributors", "全局心情、关系记忆与克制主动回复", "1.1.8")
+@register("moodripple", "MoodRipple contributors", "全局心情、关系记忆与克制主动回复", "1.1.9")
 class MoodRipplePlugin(Star):
     """A non-invasive emotional layer; it never replaces the configured persona."""
 
@@ -152,9 +152,17 @@ class MoodRipplePlugin(Star):
         if not targets:
             yield event.plain_result("测试流程已生成事件和词条，但主动名单为空，未发送消息。")
             return
+        shared_message = await self._proactive_message(generated, {})
+        if not shared_message:
+            yield event.plain_result("测试流程已生成事件和词条，但主动消息生成失败，未发送消息。")
+            return
+        interval = self._proactive_batch_interval()
         outcomes = []
-        for target in targets:
-            outcomes.append(f"{target}：{await self._proactive_for_user(target, generated, force=True)}")
+        for index, target in enumerate(targets):
+            outcome = await self._proactive_for_user(target, generated, force=True, prepared_message=shared_message)
+            outcomes.append(f"{target}：{outcome}")
+            if index + 1 < len(targets):
+                await asyncio.sleep(interval)
         label_text = "、".join(labels or []) or "（词条总结失败）"
         yield event.plain_result(
             f"测试流程完成\n事件：{generated.get('summary', '')}\n词条：{label_text}\n主动消息：\n" + "\n".join(outcomes)
@@ -309,6 +317,13 @@ class MoodRipplePlugin(Star):
         except (TypeError, ValueError):
             return None
 
+    def _proactive_batch_interval(self) -> float:
+        try:
+            interval = float(self.config.get("proactive_batch_interval_seconds", 1.5))
+        except (TypeError, ValueError):
+            interval = 1.5
+        return min(10.0, max(0.2, interval))
+
     async def _mark_event_done(self, date_key: str, event_id: str) -> None:
         def change(state: dict[str, Any]) -> None:
             for item in state.get("event_schedule", {}).get(date_key, []):
@@ -334,7 +349,9 @@ class MoodRipplePlugin(Star):
         user_id = random.choices(candidates, weights=weights, k=1)[0]
         await self._proactive_for_user(user_id, event)
 
-    async def _proactive_for_user(self, user_id: str, event: dict[str, Any], force: bool = False) -> str:
+    async def _proactive_for_user(
+        self, user_id: str, event: dict[str, Any], force: bool = False, prepared_message: str | None = None
+    ) -> str:
         state = await self.store.snapshot()
         user = state.get("users", {}).get(user_id, {})
         origin = str(user.get("last_origin", "")).strip()
@@ -352,23 +369,31 @@ class MoodRipplePlugin(Star):
         last_sent = self._parse_time(user.get("last_proactive_at", ""))
         if not force and last_sent and now - last_sent < cooldown:
             return "主动消息仍在冷却期内，本次未发送。"
-        message = await self._proactive_message(event, user)
+        message = prepared_message or await self._proactive_message(event, user)
         if not message:
             return "主动消息未通过事件关联校验，本次未发送。"
         try:
-            await self.context.send_message(origin, MessageChain().message(message))
+            accepted = await self.context.send_message(origin, MessageChain().message(message))
+            if not accepted:
+                logger.warning("MoodRipple proactive message was not submitted: no platform for %s", origin)
+                return "主动消息未提交：找不到与该会话匹配的已加载平台。"
             await self.store.mutate(
                 lambda current: current["users"].setdefault(user_id, {}).update({"last_origin": origin, "last_proactive_at": now_iso()})
             )
             await self.service.record_proactive_result(user_id, event)
-            return f"已向 {user_id} 发起主动消息。"
+            return f"已向 {user_id} 的 QQ 适配器提交消息。"
         except Exception as exc:
             logger.warning("MoodRipple proactive message was not sent: %s", exc)
             return f"主动消息发送失败：{exc}"
 
     async def _proactive_message(self, event: dict[str, Any], user: dict[str, Any]) -> str | None:
         state = await self.store.snapshot()
-        context_excerpt = await self.service.ai.recent_context_for_origin(str(user.get("last_origin", "")))
+        origin = str(user.get("last_origin", "")).strip()
+        context_excerpt = await self.service.ai.recent_context_for_origin(origin) if origin else ""
+        event_text = str(event.get("summary", "")).strip()
+        event_anchor = self._event_anchor(event_text)
+        if not event_anchor:
+            return None
         result = await self.service.ai.json(
             "生成一条克制、自然、不施压的中文主动消息。当前 event 是绝对最高优先级和唯一话题来源；"
             "没有 event 就不应发送这条消息。目标用户完全不知道该 event，也看不到任何内部事件、心情或上下文，"
@@ -376,20 +401,26 @@ class MoodRipplePlugin(Star):
             "再明确向对方抛出一个具体、容易回答且可继续聊下去的问题、选择或邀请。"
             "message 绝不能只是内心独白、微日记、事件复述、感叹或对 event 的自顾自反应；"
             "不要假定对方已经知道发生了什么，也不要只说‘我刚刚怎样了’后就结束。"
-            "先从 event 中逐字截取一段 2 到 16 字的连续独特细节作为 event_anchor，"
-            "让 message 原样包含这段 event_anchor，将它自然编入面向用户的开场语境，并围绕它提问。若无法做到，返回空 message。"
+            "event_anchor 已由系统从 event 中选定。message 必须原样包含它，将它自然编入面向用户的开场语境，并围绕它提问。"
             "目标用户上下文只能帮助选择合适的语气和接话角度，心情与关系只能调节措辞，绝不能改变、替代或稀释事件。"
             "禁止泛用问候、无关分享，或使用任何陌生人样本。根据情境选择关怀、分享、轻微求助或话题延续之一。"
             "不得透露内部数值、好感度、用户资料、系统或评估机制。返回 JSON："
-            '{"event_anchor": "必须逐字来自 event 的 2到16字连续细节", "message": "直接对用户说，含 event_anchor、清楚缘由和引导式话题，最多90字"}。输入：'
-            + str({"target_context": context_excerpt, "event": event.get("summary", ""), "topic": event.get("topic_intent", ""), "mood": state["mood"], "relationship": user.get("relationship", ""), "affection": user.get("affection", 0)})
+            '{"message": "直接对用户说，含 event_anchor、清楚缘由和引导式话题，最多90字"}。输入：'
+            + str({"target_context": context_excerpt, "event": event_text, "event_anchor": event_anchor, "topic": event.get("topic_intent", ""), "mood": state["mood"], "relationship": user.get("relationship", ""), "affection": user.get("affection", 0)})
         )
         text = str(result.get("message", "")).strip() if result else ""
-        anchor = str(result.get("event_anchor", "")).strip() if result else ""
-        event_text = str(event.get("summary", ""))
-        if not (2 <= len(anchor) <= 16 and anchor in event_text and anchor in text):
+        if event_anchor in text:
+            return text[:180]
+        if result is None:
             return None
-        return text[:180]
+        topic = str(event.get("topic_intent", "")).strip()
+        question = topic or "你会怎么想？"
+        return f"{event_anchor}。我想听听你的看法：{question}"[:180]
+
+    @staticmethod
+    def _event_anchor(event_text: str) -> str:
+        compact = "".join(event_text.split())
+        return compact[:16].rstrip("，。！？；：、") if len(compact) >= 2 else ""
 
     async def _sync_visual_status(self) -> None:
         """Best-effort bridge for adapters that explicitly expose a bot-status API."""

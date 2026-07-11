@@ -105,7 +105,14 @@ class MoodAI:
                 image_urls=[],
                 system_prompt=PRIVACY_RULES,
             )
-            data = json.loads(response.completion_text.strip())
+            text = response.completion_text.strip()
+            if text.startswith("```"):
+                lines = text.splitlines()
+                text = "\n".join(lines[1:-1] if len(lines) > 1 and lines[-1].strip().startswith("```") else lines[1:])
+            start, end = text.find("{"), text.rfind("}")
+            if start >= 0 and end >= start:
+                text = text[start : end + 1]
+            data = json.loads(text)
             return data if isinstance(data, dict) else None
         except Exception:
             return None
