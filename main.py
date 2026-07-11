@@ -14,11 +14,12 @@ from astrbot.api.provider import LLMResponse, ProviderRequest
 from astrbot.api.star import Context, Star, register
 
 from .moodripple.ai import MoodAI
+from .moodripple.routing import private_origin, private_origin_candidates
 from .moodripple.service import MoodService, now_iso
 from .moodripple.store import StateStore
 
 
-@register("moodripple", "MoodRipple contributors", "全局心情、关系记忆与克制主动回复", "1.1.9")
+@register("moodripple", "MoodRipple contributors", "全局心情、关系记忆与克制主动回复", "1.2.0")
 class MoodRipplePlugin(Star):
     """A non-invasive emotional layer; it never replaces the configured persona."""
 
@@ -354,17 +355,18 @@ class MoodRipplePlugin(Star):
     ) -> str:
         state = await self.store.snapshot()
         user = state.get("users", {}).get(user_id, {})
-        origin = str(user.get("last_origin", "")).strip()
-        if not origin:
-            try:
-                origin = str(self.config.get("proactive_umo_template", "default:FriendMessage:{qq}")).format(qq=user_id)
-            except (KeyError, ValueError):
-                return "主动路由模板无效：请检查 proactive_umo_template 配置。"
+        try:
+            origin = private_origin(
+                user_id,
+                str(user.get("last_origin", "")),
+                str(self.config.get("proactive_umo_template", "") or "default:FriendMessage:{qq}"),
+            )
+        except (KeyError, ValueError):
+            return "主动路由模板无效：请检查 proactive_umo_template 配置。"
         now = datetime.now().astimezone()
-        active_window = timedelta(minutes=max(1, int(self.config.get("session_awareness_minutes", 30))))
         last_seen = self._parse_time(user.get("last_seen", ""))
-        if last_seen and now - last_seen <= active_window:
-            return "目标处于近期活跃会话，已跳过单独发送；事件话题会在当前对话中自然引入。"
+        if last_seen and now - last_seen <= timedelta(minutes=20):
+            return "目标在最近 20 分钟内有消息，本次主动发送已取消。"
         cooldown = timedelta(minutes=max(1, int(self.config.get("proactive_cooldown_minutes", 720))))
         last_sent = self._parse_time(user.get("last_proactive_at", ""))
         if not force and last_sent and now - last_sent < cooldown:
@@ -373,18 +375,40 @@ class MoodRipplePlugin(Star):
         if not message:
             return "主动消息未通过事件关联校验，本次未发送。"
         try:
-            accepted = await self.context.send_message(origin, MessageChain().message(message))
+            accepted, submitted_origin, failure = await self._submit_proactive_message(user_id, origin, message)
             if not accepted:
-                logger.warning("MoodRipple proactive message was not submitted: no platform for %s", origin)
-                return "主动消息未提交：找不到与该会话匹配的已加载平台。"
+                logger.warning("MoodRipple proactive message was not submitted: %s", failure)
+                return "主动消息未提交：找不到可用于该用户私聊的已加载平台。"
             await self.store.mutate(
-                lambda current: current["users"].setdefault(user_id, {}).update({"last_origin": origin, "last_proactive_at": now_iso()})
+                lambda current: current["users"].setdefault(user_id, {}).update({"last_origin": submitted_origin, "last_proactive_at": now_iso()})
             )
             await self.service.record_proactive_result(user_id, event)
             return f"已向 {user_id} 的 QQ 适配器提交消息。"
         except Exception as exc:
             logger.warning("MoodRipple proactive message was not sent: %s", exc)
             return f"主动消息发送失败：{exc}"
+
+    def _loaded_platform_ids(self) -> list[str]:
+        manager = getattr(self.context, "platform_manager", None)
+        platform_ids = []
+        for platform in getattr(manager, "platform_insts", []):
+            try:
+                platform_ids.append(str(platform.meta().id))
+            except Exception:
+                continue
+        return platform_ids
+
+    async def _submit_proactive_message(self, user_id: str, origin: str, message: str) -> tuple[bool, str, str]:
+        failures = []
+        for candidate in private_origin_candidates(origin, user_id, self._loaded_platform_ids()):
+            try:
+                accepted = await self.context.send_message(candidate, MessageChain().message(message))
+                if accepted:
+                    return True, candidate, ""
+                failures.append(f"no platform for {candidate}")
+            except Exception as exc:
+                failures.append(f"{candidate}: {exc}")
+        return False, origin, "; ".join(failures[-3:]) or "no private route candidates"
 
     async def _proactive_message(self, event: dict[str, Any], user: dict[str, Any]) -> str | None:
         state = await self.store.snapshot()

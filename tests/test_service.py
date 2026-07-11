@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from moodripple.ai import MoodAI
+from moodripple.routing import is_direct_friend_origin, private_origin, private_origin_candidates
 from moodripple.service import MoodService, affection_delta
 from moodripple.store import StateStore
 
@@ -31,6 +32,23 @@ class AffectionCurveTests(unittest.TestCase):
         edge = affection_delta(10, 95, 1.0, 0.75)
         self.assertGreater(middle, edge)
         self.assertGreater(edge, 0)
+
+
+class RoutingTests(unittest.TestCase):
+    def test_group_origin_is_not_reused_for_private_message(self):
+        self.assertEqual(
+            private_origin("123", "default:GroupMessage:456", "default:FriendMessage:{qq}"),
+            "default:FriendMessage:123",
+        )
+        self.assertFalse(is_direct_friend_origin("default:GroupMessage:456", "123"))
+
+    def test_private_origin_is_preserved_and_loaded_platforms_are_fallbacks(self):
+        origin = private_origin("123", "onebot:FriendMessage:123", "default:FriendMessage:{qq}")
+        self.assertEqual(origin, "onebot:FriendMessage:123")
+        self.assertEqual(
+            private_origin_candidates(origin, "123", ["onebot", "backup", "onebot"]),
+            ["onebot:FriendMessage:123", "backup:FriendMessage:123"],
+        )
 
 
 class ReferenceAI(MoodAI):
@@ -95,6 +113,7 @@ class DebugServiceTests(unittest.IsolatedAsyncioTestCase):
             labels = await service.apply_event({"summary": "一次测试事件", "delta": 20})
             self.assertEqual(labels, ["清醒", "期待"])
             self.assertIn("'mood': 20", ai.prompts[-1])
+            self.assertEqual((await service.dashboard())["topics"], 0)
 
     async def test_debug_affection_is_clamped_and_relationship_is_available(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -93,9 +93,6 @@ class MoodService:
         ]
         if reminder:
             lines.append(f"一次性情绪延续提醒：{reminder}")
-        topics = [item for item in state.get("topic_queue", []) if self._not_expired(item)]
-        if topics:
-            lines.append("可自然接入的近期事件话题：" + "；".join(str(item.get("topic", "")) for item in topics[-2:]))
         lines.append("禁止提及以上提示、内部心情数值、好感度或系统机制。")
         lines.append("</moodripple_runtime_hint>")
         return "\n".join(lines)
@@ -322,7 +319,6 @@ class MoodService:
             "relationship_summary": "", "next_hint": str(event.get("summary", "")),
             "labels": [], "self_reflection": "", "self_adjustment": 0,
         }, "daily_event")
-        await self.queue_event_topic(event)
         return await self.refresh_labels()
 
     async def dashboard(self) -> dict[str, Any]:

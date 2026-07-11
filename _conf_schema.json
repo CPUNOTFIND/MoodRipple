@@ -12,7 +12,6 @@
   "proactive_probability": {"type": "float", "default": 0.35, "description": "主动概率", "hint": "每个随机事件后尝试主动联系名单用户的概率，范围 0 到 1。", "obvious_hint": true},
   "proactive_cooldown_minutes": {"type": "int", "default": 720, "description": "消息冷却", "hint": "对同一用户两次主动消息之间的最短间隔，单位为分钟。", "obvious_hint": true},
   "proactive_batch_interval_seconds": {"type": "float", "default": 1.5, "description": "批量发送间隔", "hint": "仅用于 /mooddebug flow：向主动名单逐个提交消息时的等待秒数。较低带宽或 QQ 限流环境建议保持 1.5 秒或更高，范围 0.2 到 10。", "obvious_hint": true},
-  "session_awareness_minutes": {"type": "int", "default": 30, "description": "活跃窗口", "hint": "用户在此窗口内刚与机器人对话时，只缓存话题，等用户下次发言再自然引入。", "obvious_hint": true},
   "affection_sensitivity": {"type": "float", "default": 1.0, "description": "好感敏感度", "hint": "AI 给出的好感度变化的总敏感度。", "obvious_hint": true},
   "affection_boundary_damping": {"type": "float", "default": 0.75, "description": "边界阻尼", "hint": "好感度接近 -100 或 100 时的减速强度，越大越难抵达极端值。", "obvious_hint": true},
   "group_atmosphere_enabled": {"type": "bool", "default": true, "description": "群聊氛围", "hint": "开启后，仅在机器人近期参与互动的群中收集短暂内存文本并提炼匿名群体氛围。", "obvious_hint": true},
