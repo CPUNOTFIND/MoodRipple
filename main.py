@@ -18,7 +18,7 @@ from .moodripple.service import MoodService, now_iso
 from .moodripple.store import StateStore
 
 
-@register("moodripple", "MoodRipple contributors", "全局心情、关系记忆与克制主动回复", "1.1.2")
+@register("moodripple", "MoodRipple contributors", "全局心情、关系记忆与克制主动回复", "1.1.3")
 class MoodRipplePlugin(Star):
     """A non-invasive emotional layer; it never replaces the configured persona."""
 
@@ -329,7 +329,7 @@ class MoodRipplePlugin(Star):
             return "主动消息仍在冷却期内，本次未发送。"
         message = await self._proactive_message(event, user)
         if not message:
-            return "主动消息生成失败：请检查内部模型配置后重试。"
+            return "主动消息未通过事件关联校验，本次未发送。"
         try:
             await self.context.send_message(str(user["last_origin"]), MessageChain().message(message))
             await self.store.mutate(lambda current: current["users"][user_id].update({"last_proactive_at": now_iso()}))
@@ -343,17 +343,22 @@ class MoodRipplePlugin(Star):
         state = await self.store.snapshot()
         context_excerpt = await self.service.ai.recent_context_for_origin(str(user.get("last_origin", "")))
         result = await self.service.ai.json(
-            "生成一条克制、自然、不施压的中文主动消息。参考优先级必须是：目标用户的近期上下文第一，"
-            "当前事件第二，当前心情与关系第三（只影响措辞）。任何陌生人样本都与目标无关，绝不可使用。"
-            "消息必须以当前事件为唯一核心，"
-            "明确提到事件中的一个独特细节，或由该细节自然抛出 topic_intent；禁止发送脱离事件的泛用问候。"
-            "关系与心情只可影响措辞，不可取代事件内容。根据情境选择关怀、分享、轻微求助或话题延续之一。"
+            "生成一条克制、自然、不施压的中文主动消息。当前事件是绝对最高优先级和唯一话题来源；"
+            "没有事件就不应发送这条消息。目标用户上下文只能帮助选择合适的语气和接话角度，"
+            "心情与关系只能调节措辞，绝不能改变、替代或稀释事件。"
+            "先从 event 中逐字截取一段 2 到 16 字的连续独特细节作为 event_anchor，"
+            "再让 message 原样包含这段 event_anchor 并围绕它展开。若无法做到，返回空 message。"
+            "禁止泛用问候、无关分享，或使用任何陌生人样本。根据情境选择关怀、分享、轻微求助或话题延续之一。"
             "不得透露内部数值、好感度、用户资料、系统或评估机制。返回 JSON："
-            '{"event_anchor": "消息中使用的事件独特细节", "message": "最多90字"}。输入：'
+            '{"event_anchor": "必须逐字来自 event 的 2到16字连续细节", "message": "必须含 event_anchor，最多90字"}。输入：'
             + str({"target_context": context_excerpt, "event": event.get("summary", ""), "topic": event.get("topic_intent", ""), "mood": state["mood"], "relationship": user.get("relationship", ""), "affection": user.get("affection", 0)})
         )
         text = str(result.get("message", "")).strip() if result else ""
-        return text[:180] or None
+        anchor = str(result.get("event_anchor", "")).strip() if result else ""
+        event_text = str(event.get("summary", ""))
+        if not (2 <= len(anchor) <= 16 and anchor in event_text and anchor in text):
+            return None
+        return text[:180]
 
     async def _sync_visual_status(self) -> None:
         """Best-effort bridge for adapters that explicitly expose a bot-status API."""
