@@ -18,7 +18,7 @@ from .moodripple.service import MoodService, now_iso
 from .moodripple.store import StateStore
 
 
-@register("moodripple", "MoodRipple contributors", "全局心情、关系记忆与克制主动回复", "1.1.4")
+@register("moodripple", "MoodRipple contributors", "全局心情、关系记忆与克制主动回复", "1.1.5")
 class MoodRipplePlugin(Star):
     """A non-invasive emotional layer; it never replaces the configured persona."""
 
@@ -331,9 +331,13 @@ class MoodRipplePlugin(Star):
 
     async def _proactive_for_user(self, user_id: str, event: dict[str, Any], force: bool = False) -> str:
         state = await self.store.snapshot()
-        user = state.get("users", {}).get(user_id)
-        if not user or not user.get("last_origin"):
-            return "无法主动发送：该 QQ 号尚未与机器人建立可用会话。"
+        user = state.get("users", {}).get(user_id, {})
+        origin = str(user.get("last_origin", "")).strip()
+        if not origin:
+            try:
+                origin = str(self.config.get("proactive_umo_template", "default:FriendMessage:{qq}")).format(qq=user_id)
+            except (KeyError, ValueError):
+                return "主动路由模板无效：请检查 proactive_umo_template 配置。"
         now = datetime.now().astimezone()
         active_window = timedelta(minutes=max(1, int(self.config.get("session_awareness_minutes", 30))))
         last_seen = self._parse_time(user.get("last_seen", ""))
@@ -347,8 +351,10 @@ class MoodRipplePlugin(Star):
         if not message:
             return "主动消息未通过事件关联校验，本次未发送。"
         try:
-            await self.context.send_message(str(user["last_origin"]), MessageChain().message(message))
-            await self.store.mutate(lambda current: current["users"][user_id].update({"last_proactive_at": now_iso()}))
+            await self.context.send_message(origin, MessageChain().message(message))
+            await self.store.mutate(
+                lambda current: current["users"].setdefault(user_id, {}).update({"last_origin": origin, "last_proactive_at": now_iso()})
+            )
             await self.service.record_proactive_result(user_id, event)
             return f"已向 {user_id} 发起主动消息。"
         except Exception as exc:
