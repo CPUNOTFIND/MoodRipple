@@ -18,7 +18,7 @@ from .moodripple.service import MoodService, now_iso
 from .moodripple.store import StateStore
 
 
-@register("moodripple", "MoodRipple contributors", "全局心情、关系记忆与克制主动回复", "1.1.6")
+@register("moodripple", "MoodRipple contributors", "全局心情、关系记忆与克制主动回复", "1.1.7")
 class MoodRipplePlugin(Star):
     """A non-invasive emotional layer; it never replaces the configured persona."""
 
@@ -370,14 +370,18 @@ class MoodRipplePlugin(Star):
         state = await self.store.snapshot()
         context_excerpt = await self.service.ai.recent_context_for_origin(str(user.get("last_origin", "")))
         result = await self.service.ai.json(
-            "生成一条克制、自然、不施压的中文主动消息。当前事件是绝对最高优先级和唯一话题来源；"
-            "没有事件就不应发送这条消息。目标用户上下文只能帮助选择合适的语气和接话角度，"
-            "心情与关系只能调节措辞，绝不能改变、替代或稀释事件。"
+            "生成一条克制、自然、不施压的中文主动消息。当前 event 是绝对最高优先级和唯一话题来源；"
+            "没有 event 就不应发送这条消息。目标用户完全不知道该 event，也看不到任何内部事件、心情或上下文，"
+            "所以最终 message 必须是直接对用户说的话：先用一小句让对方听懂事件带来的缘由或画面，"
+            "再明确向对方抛出一个具体、容易回答且可继续聊下去的问题、选择或邀请。"
+            "message 绝不能只是内心独白、微日记、事件复述、感叹或对 event 的自顾自反应；"
+            "不要假定对方已经知道发生了什么，也不要只说‘我刚刚怎样了’后就结束。"
             "先从 event 中逐字截取一段 2 到 16 字的连续独特细节作为 event_anchor，"
-            "再让 message 原样包含这段 event_anchor 并围绕它展开。若无法做到，返回空 message。"
+            "让 message 原样包含这段 event_anchor，将它自然编入面向用户的开场语境，并围绕它提问。若无法做到，返回空 message。"
+            "目标用户上下文只能帮助选择合适的语气和接话角度，心情与关系只能调节措辞，绝不能改变、替代或稀释事件。"
             "禁止泛用问候、无关分享，或使用任何陌生人样本。根据情境选择关怀、分享、轻微求助或话题延续之一。"
             "不得透露内部数值、好感度、用户资料、系统或评估机制。返回 JSON："
-            '{"event_anchor": "必须逐字来自 event 的 2到16字连续细节", "message": "必须含 event_anchor，最多90字"}。输入：'
+            '{"event_anchor": "必须逐字来自 event 的 2到16字连续细节", "message": "直接对用户说，含 event_anchor、清楚缘由和引导式话题，最多90字"}。输入：'
             + str({"target_context": context_excerpt, "event": event.get("summary", ""), "topic": event.get("topic_intent", ""), "mood": state["mood"], "relationship": user.get("relationship", ""), "affection": user.get("affection", 0)})
         )
         text = str(result.get("message", "")).strip() if result else ""
