@@ -66,6 +66,14 @@ class MoodService:
 
         await self.store.mutate(change)
 
+    async def proactive_weight(self, user_id: str) -> float:
+        state = await self.store.snapshot()
+        records = [item for item in state["proactive_records"] if item.get("user_id") == user_id]
+        if not records:
+            return 1.0
+        replies = sum(1 for item in records if item.get("outcome") == "replied")
+        return 0.25 + replies / len(records)
+
     @staticmethod
     def _not_expired(item: dict[str, Any]) -> bool:
         try:

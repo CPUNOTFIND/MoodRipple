@@ -108,6 +108,7 @@ class DebugServiceTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(dashboard["topics"], 1)
             self.assertEqual(dashboard["proactive_sent"], 1)
             self.assertEqual(dashboard["proactive_replies"], 1)
+            self.assertGreater(await service.proactive_weight("123"), await service.proactive_weight("456"))
 
     async def test_event_prompt_contains_default_persona_and_requires_concrete_event(self):
         with tempfile.TemporaryDirectory() as directory:

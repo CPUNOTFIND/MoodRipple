@@ -18,7 +18,7 @@ from .moodripple.service import MoodService, now_iso
 from .moodripple.store import StateStore
 
 
-@register("moodripple", "MoodRipple contributors", "全局心情、关系记忆与克制主动回复", "1.1.0")
+@register("moodripple", "MoodRipple contributors", "全局心情、关系记忆与克制主动回复", "1.1.1")
 class MoodRipplePlugin(Star):
     """A non-invasive emotional layer; it never replaces the configured persona."""
 
@@ -309,7 +309,8 @@ class MoodRipplePlugin(Star):
         candidates = [str(item) for item in self.config.get("proactive_user_ids", [])]
         if not candidates:
             return
-        user_id = random.choice(candidates)
+        weights = [await self.service.proactive_weight(user_id) for user_id in candidates]
+        user_id = random.choices(candidates, weights=weights, k=1)[0]
         await self._proactive_for_user(user_id, event)
 
     async def _proactive_for_user(self, user_id: str, event: dict[str, Any], force: bool = False) -> str:
