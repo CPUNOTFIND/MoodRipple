@@ -1,0 +1,1 @@
+"""MoodRipple plugin services."""

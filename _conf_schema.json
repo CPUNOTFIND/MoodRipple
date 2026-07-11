@@ -1,0 +1,22 @@
+{
+  "initial_mood": {"type": "int", "default": 0, "description": "初始心情", "hint": "机器人首次运行时的全局心情值，范围 -100 到 100。之后会持续保存，不会每天重置。", "obvious_hint": true},
+  "daily_decay_rate": {"type": "float", "default": 0.12, "description": "每日回归", "hint": "每天向中性心情回归的比例，范围 0 到 1。数值越大，情绪惯性越弱。", "obvious_hint": true},
+  "significant_change_threshold": {"type": "int", "default": 12, "description": "标签阈值", "hint": "心情单次变化达到此幅度时，才会请求 AI 刷新情绪词条。", "obvious_hint": true},
+  "max_emotion_labels": {"type": "int", "default": 4, "description": "词条上限", "hint": "AI 为当前心情保留的最大情绪词条数。", "obvious_hint": true},
+  "event_time_windows": {"type": "list", "default": ["09:00-11:30", "14:00-17:30", "20:00-22:30"], "description": "事件时段", "hint": "每天随机事件可出现的本地时间窗口，格式为 HH:MM-HH:MM。", "obvious_hint": true},
+  "max_daily_events": {"type": "int", "default": 2, "description": "每日事件数", "hint": "一天内最多生成多少个 AI 随机情绪事件。", "obvious_hint": true},
+  "chat_atmosphere_ratio": {"type": "float", "default": 0.35, "description": "氛围参考率", "hint": "随机事件参考已提炼的匿名群聊氛围摘要的概率，范围 0 到 1。", "obvious_hint": true},
+  "proactive_user_ids": {"type": "list", "default": [], "description": "主动名单", "hint": "允许机器人主动联系的 QQ 号。目标必须至少与机器人说过一次话，才能保存可发送会话。", "obvious_hint": true},
+  "proactive_probability": {"type": "float", "default": 0.35, "description": "主动概率", "hint": "每个随机事件后尝试主动联系名单用户的概率，范围 0 到 1。", "obvious_hint": true},
+  "proactive_cooldown_minutes": {"type": "int", "default": 720, "description": "消息冷却", "hint": "对同一用户两次主动消息之间的最短间隔，单位为分钟。", "obvious_hint": true},
+  "session_awareness_minutes": {"type": "int", "default": 30, "description": "活跃窗口", "hint": "用户在此窗口内刚与机器人对话时，只缓存话题，等用户下次发言再自然引入。", "obvious_hint": true},
+  "affection_sensitivity": {"type": "float", "default": 1.0, "description": "好感敏感度", "hint": "AI 给出的好感度变化的总敏感度。", "obvious_hint": true},
+  "affection_boundary_damping": {"type": "float", "default": 0.75, "description": "边界阻尼", "hint": "好感度接近 -100 或 100 时的减速强度，越大越难抵达极端值。", "obvious_hint": true},
+  "group_atmosphere_enabled": {"type": "bool", "default": true, "description": "群聊氛围", "hint": "开启后，仅在机器人近期参与互动的群中收集短暂内存文本并提炼匿名群体氛围。", "obvious_hint": true},
+  "group_whitelist": {"type": "list", "default": [], "description": "群聊白名单", "hint": "允许感知氛围的群号列表；留空代表不限制群号。", "obvious_hint": true},
+  "group_active_minutes": {"type": "int", "default": 20, "description": "群活跃窗口", "hint": "机器人在群里回复后，多长时间内允许进行群聊氛围感知，单位为分钟。", "obvious_hint": true},
+  "group_batch_size": {"type": "int", "default": 8, "description": "氛围批量", "hint": "累计多少条匿名群消息后才调用一次 AI 分析群体氛围。", "obvious_hint": true},
+  "journal_hour": {"type": "int", "default": 0, "description": "日记时间", "hint": "每天从该小时起，自动补写前一天的内部情绪日记，范围 0 到 23。", "obvious_hint": true},
+  "ai_provider_id": {"type": "string", "default": "", "description": "内部模型", "hint": "专用于情绪评估、词条、事件、日记和主动消息的模型提供商；留空使用 AstrBot 当前默认模型。", "obvious_hint": true, "_special": "select_provider"},
+  "enable_qq_status_sync": {"type": "bool", "default": false, "description": "状态同步", "hint": "开启后，若 QQ 适配器显式提供状态接口，插件会在随机事件后最佳努力同步诗意签名或状态。", "obvious_hint": true}
+}
