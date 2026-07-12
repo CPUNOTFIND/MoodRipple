@@ -19,7 +19,7 @@ from .moodripple.service import MoodService, now_iso
 from .moodripple.store import StateStore
 
 
-@register("moodripple", "MoodRipple contributors", "全局心情、关系记忆与克制主动回复", "1.2.0")
+@register("moodripple", "MoodRipple contributors", "全局心情、关系记忆与克制主动回复", "1.2.1")
 class MoodRipplePlugin(Star):
     """A non-invasive emotional layer; it never replaces the configured persona."""
 
@@ -266,10 +266,12 @@ class MoodRipplePlugin(Star):
             self._spawn(self._create_journal(yesterday))
         for event_id in await self._due_event_ids(now):
             event = await self.service.create_event(await self._anonymous_atmosphere())
-            if event:
-                await self.service.apply_event(event)
-                self._spawn(self._sync_visual_status())
-                await self._proactive_after_event(event)
+            if not event:
+                logger.warning("MoodRipple event generation failed; it will retry on the next scheduler tick")
+                continue
+            await self.service.apply_event(event)
+            self._spawn(self._sync_visual_status())
+            await self._proactive_after_event(event)
             await self._mark_event_done(today, event_id)
 
     async def _due_event_ids(self, now: datetime) -> list[str]:
@@ -341,14 +343,18 @@ class MoodRipplePlugin(Star):
         return summaries[-1] if summaries else ""
 
     async def _proactive_after_event(self, event: dict[str, Any]) -> None:
-        if random.random() > float(self.config.get("proactive_probability", 0.35)):
+        probability = min(1.0, max(0.0, float(self.config.get("proactive_probability", 0.35))))
+        if random.random() > probability:
+            logger.info("MoodRipple proactive message skipped by probability setting")
             return
-        candidates = [str(item) for item in self.config.get("proactive_user_ids", [])]
+        candidates = [str(item).strip() for item in self.config.get("proactive_user_ids", []) if str(item).strip()]
         if not candidates:
+            logger.warning("MoodRipple proactive message skipped because the proactive user list is empty")
             return
         weights = [await self.service.proactive_weight(user_id) for user_id in candidates]
         user_id = random.choices(candidates, weights=weights, k=1)[0]
-        await self._proactive_for_user(user_id, event)
+        outcome = await self._proactive_for_user(user_id, event)
+        logger.info("MoodRipple proactive attempt finished: %s", outcome.split("：", 1)[0])
 
     async def _proactive_for_user(
         self, user_id: str, event: dict[str, Any], force: bool = False, prepared_message: str | None = None
@@ -377,7 +383,7 @@ class MoodRipplePlugin(Star):
         try:
             accepted, submitted_origin, failure = await self._submit_proactive_message(user_id, origin, message)
             if not accepted:
-                logger.warning("MoodRipple proactive message was not submitted: %s", failure)
+                logger.warning("MoodRipple proactive message was not submitted: %s", failure.split(":", 1)[0])
                 return "主动消息未提交：找不到可用于该用户私聊的已加载平台。"
             await self.store.mutate(
                 lambda current: current["users"].setdefault(user_id, {}).update({"last_origin": submitted_origin, "last_proactive_at": now_iso()})
