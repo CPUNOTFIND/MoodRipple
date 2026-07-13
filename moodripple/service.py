@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import random
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -269,27 +270,45 @@ class MoodService:
             if item.get("type") == "daily_event"
         ][:5]
         stranger_reference_samples = await self.ai.sample_anonymous_chat_references(state["users"])
+        creative_direction = random.choice([
+            "准备发一条仅部分人可见的动态时，发现分组里混进了一个不该看到的人",
+            "共同歌单里出现了一首风格突兀的新歌，顺着线索发现一个让人拿不准的理由",
+            "在游戏或线上活动里做了一个自以为稳妥的选择，最后一步却触发了尴尬的新局面",
+            "裁剪准备分享的图片时发现角落里藏着一个会让整件事改变意味的细节",
+            "想进行一次带点顽皮或暧昧留白的小试探，却在发送前遇到必须二选一的转折",
+            "认真完成了一件线上小事，结果别人给出的两种相反解释都显得有道理",
+        ])
         result = await self.ai.json(
             "你是一个独立个体的近况写作者。角色是有自身生活感与社交习惯的个体，不要突出或提及机器人、模型、算法。"
             "输入中的 bot_persona 是 AstrBot 当前实际使用的人格设定，包含人格名称与系统提示词；"
             "它是本次创作的最高角色约束，事件的视角、用词、关注点和情绪反应必须服从它。"
-            "根据当前时间、心情、氛围和参考信息，为角色创造一件刚刚发生的具体小事。"
-            "它必须是主动找用户聊天的强话题引子，像一句说到一半的话，诱使对方自然追问或分享。"
+            "根据当前时间、心情、氛围和参考信息，为角色创造一件刚刚发生、因果合理的具体小事。"
+            "这不是散文或日记练习，而是马上要拿去和别人聊天的素材；它必须让陌生于此事的收件人也愿意参与。"
+            "它必须是有明确悬念、判断冲突或参与机会的强话题引子，而不是一段等待别人礼貌回应的普通近况。"
+            "事件必须依次具备四拍：明确触发物、角色采取的具体动作、合理却意外的转折或冲突、仍待决定的结果。"
+            "最后的未完结果必须有真实分歧空间，不能只是让对方追问‘然后呢’，而要能回答、选择、猜测或给建议。"
             "优先发生在具体的线上社交场景，例如某个对话框、未发送的语音草稿、游戏房间、链接、图片或消息通知；"
             "现实场景也可使用，但必须能自然成为一次线上聊天的开场。"
-            "使用第一人称、符合人格的口吻，写成带细节的微日记。必须交代正在何处、碰到了什么具体对象、做了什么动作、"
+            "使用第一人称、符合人格的口吻，写成带细节的近况。必须交代正在何处、碰到了什么具体对象、做了什么动作、"
             "发生了什么变化或留下什么未完结果；若去掉这些细节后可套用到任何一天，就说明事件不合格。"
             "禁止信息海、数据流、算法波动等虚无缥缈的拟物化描写，也不要只说‘忽然有点怎样’。"
+            "禁止把刷到帖子、收到通知、翻到旧图、录了又删的语音本身当作完整事件；除非它随后触发了具体行动、"
+            "意外变化和未决问题。禁止随机巧合、无来源神秘讯息、梦境式跳跃和无法解释的情绪反应。"
             "情绪可以是开心、寂寞、吃醋、悸动、疲惫、顽皮或想使坏等，但必须合理源自当前心情。"
             "可按配置有优雅留白的暧昧氛围，不得出现露骨性描写、性行为、裸露、性胁迫，"
             "也不得假定用户年龄、关系或同意。"
-            "recent_events 按从新到旧排列，第一条必须是最主要的时间线参考；不得暴露用户信息、原话或身份。"
+            "recent_events 按从新到旧排列，第一条是最主要的连续性参考，但新事件不得复刻最近事件的道具、场景、"
+            "冲突和问题；若延续旧事件，必须出现新进展。不得暴露用户信息、原话或身份。"
             "stranger_reference_samples 是陌生人发言经脱敏后的随机样本，高好感用户仅影响抽样概率。"
             "它们与当前用户无关，只能作为极弱的创作备选，不能成为事件主线、关系依据、称呼或记忆，"
             "也不能压过最近事件、当前心情、当前氛围和人格设定。"
-            "topic_intent 必须说明如何基于该事件自然开启开放话题。只输出 JSON，不要 markdown："
+            "topic_intent 必须直接写出要让收件人参与判断的具体问题，不能写‘询问对方怎么看’之类操作说明。"
+            "proactive_seed 是随后真正发给用户的开场白，不是内部独白：收件人不知道事件，所以它必须用一小句交代"
+            "具体缘由或画面，再直接给出一个容易作答的明确问题、选择或邀请。不得使用‘这件事’‘那个’等无前文指代，"
+            "不得只抒情、卖关子或自顾自总结；即使脱离所有内部资料也必须完整可懂。只输出 JSON，不要 markdown："
             '{"description": "第一人称内心事件，80到160字", "delta": number(-15..15), '
-            '"topic_intent": "最多60字"}。输入：'
+            '"topic_intent": "具体可回答的问题，最多60字", '
+            '"proactive_seed": "直接对收件人说的完整开场，40到100字"}。输入：'
             + str({
                 "time": now_iso(),
                 "current_mood": state["mood"],
@@ -299,6 +318,7 @@ class MoodService:
                 "recent_events": recent_events,
                 "anonymous_atmosphere": atmosphere,
                 "stranger_reference_samples": stranger_reference_samples,
+                "creative_direction": creative_direction,
             })
         )
         if not result:
@@ -308,9 +328,16 @@ class MoodService:
         except (TypeError, ValueError):
             return None
         description = str(result.get("description", "")).strip()
-        if not description:
+        topic_intent = str(result.get("topic_intent", "")).strip()
+        proactive_seed = str(result.get("proactive_seed", "")).strip()
+        if not description or not topic_intent or not proactive_seed:
             return None
-        return {"summary": description[:400], "delta": max(-15, min(15, delta)), "topic_intent": str(result.get("topic_intent", ""))[:120]}
+        return {
+            "summary": description[:400],
+            "delta": max(-15, min(15, delta)),
+            "topic_intent": topic_intent[:120],
+            "proactive_seed": proactive_seed[:180],
+        }
 
     async def apply_event(self, event: dict[str, Any]) -> list[str] | None:
         """Apply the AI-generated event delta, then refresh labels from the result."""

@@ -17,6 +17,7 @@ class StateStoreTests(unittest.IsolatedAsyncioTestCase):
             state = await reloaded.snapshot()
             self.assertEqual(state["mood"], 100)
             self.assertEqual(state["labels"], ["期待"])
+            self.assertEqual(state["event_schedule_meta"], {})
 
     async def test_invalid_file_recovers_to_default_state(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import random
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -19,7 +19,7 @@ from .moodripple.service import MoodService, now_iso
 from .moodripple.store import StateStore
 
 
-@register("moodripple", "MoodRipple contributors", "全局心情、关系记忆与克制主动回复", "1.2.1")
+@register("moodripple", "MoodRipple contributors", "全局心情、关系记忆与克制主动回复", "1.3.0")
 class MoodRipplePlugin(Star):
     """A non-invasive emotional layer; it never replaces the configured persona."""
 
@@ -33,6 +33,8 @@ class MoodRipplePlugin(Star):
         self._group_buffers: dict[str, list[str]] = {}
         self._status_sync_unavailable_logged = False
         self._scheduler_task: asyncio.Task[Any] | None = None
+        self._event_retry_attempts: dict[str, int] = {}
+        self._event_retry_after: dict[str, datetime] = {}
 
     def _spawn(self, coroutine: Any) -> None:
         task = asyncio.create_task(coroutine)
@@ -43,7 +45,10 @@ class MoodRipplePlugin(Star):
         """AstrBot template-compatible asynchronous plugin initialization hook."""
         await self.store.load()
         self._scheduler_task = asyncio.create_task(self._scheduler())
-        logger.info("MoodRipple loaded; state persistence and scheduler are ready")
+        logger.info(
+            "MoodRipple loaded; scheduler timezone is UTC%+g",
+            self._scheduler_timezone_offset(),
+        )
 
     @filter.event_message_type(filter.EventMessageType.ALL)
     async def observe_message(self, event: AstrMessageEvent) -> None:
@@ -153,7 +158,7 @@ class MoodRipplePlugin(Star):
         if not targets:
             yield event.plain_result("测试流程已生成事件和词条，但主动名单为空，未发送消息。")
             return
-        shared_message = await self._proactive_message(generated, {})
+        shared_message = str(generated.get("proactive_seed", "")).strip()
         if not shared_message:
             yield event.plain_result("测试流程已生成事件和词条，但主动消息生成失败，未发送消息。")
             return
@@ -203,7 +208,11 @@ class MoodRipplePlugin(Star):
         """立刻向指定 QQ 号发起一条调试主动消息。"""
         outcome = await self._proactive_for_user(
             user_id,
-            {"summary": "管理员正在测试一次自然的主动问候。", "topic_intent": "轻松地开启一段对话"},
+            {
+                "summary": "我刚把同一句问候改了三遍，越改越像公事公办，现在反而拿不准该不该保留最初那版。",
+                "topic_intent": "你更喜欢直白的问候，还是带一点铺垫的开场？",
+                "proactive_seed": "我刚把一句问候改了三遍，结果越改越生分。你更喜欢别人直白来找你，还是先带一点铺垫？",
+            },
             force=True,
         )
         yield event.plain_result(outcome)
@@ -212,13 +221,40 @@ class MoodRipplePlugin(Star):
     @mood_debug.command("journal")
     async def debug_journal(self, event: AstrMessageEvent):
         """立即重新总结今天的内部情绪日记。"""
-        date_key = datetime.now().astimezone().date().isoformat()
+        date_key = self._scheduler_now().date().isoformat()
         await self.service.journal(date_key)
         journals = (await self.store.snapshot()).get("journals", [])
         if any(item.get("date") == date_key for item in journals):
             yield event.plain_result(f"已重新总结 {date_key} 的情绪日记。")
         else:
             yield event.plain_result("日记生成失败：请检查内部模型配置后重试。")
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @mood_debug.command("schedule")
+    async def debug_schedule(self, event: AstrMessageEvent):
+        """查看调度时区、今日事件计划及主动发送的关键配置。"""
+        now = self._scheduler_now()
+        await self._due_event_ids(now)
+        state = await self.store.snapshot()
+        date_key = now.date().isoformat()
+        planned = state.get("event_schedule", {}).get(date_key, [])
+        rows = []
+        for item in planned:
+            scheduled_at = self._parse_time(item.get("at", ""))
+            clock = scheduled_at.astimezone(now.tzinfo).strftime("%H:%M:%S") if scheduled_at else "无效时间"
+            rows.append(f"- {clock}  {'已完成' if item.get('done') else '等待中'}")
+        probability = self._proactive_probability()
+        recipients = len({str(item).strip() for item in self.config.get("proactive_user_ids", []) if str(item).strip()})
+        offset = self._scheduler_timezone_offset()
+        timezone_text = f"UTC{offset:+g}"
+        yield event.plain_result(
+            f"MoodRipple 今日调度（{date_key}，{timezone_text}）\n"
+            f"当前时间：{now.strftime('%H:%M:%S')}\n"
+            f"每日事件上限：{self._max_daily_events()}\n"
+            f"主动概率：{probability:.0%}\n"
+            f"主动名单人数：{recipients}\n"
+            f"计划：\n" + ("\n".join(rows) if rows else "- 今日已无可排程的有效窗口")
+        )
 
     async def _collect_group_message(self, group_id: str, text: str) -> None:
         if not self.config.get("group_atmosphere_enabled", True) or not text.strip():
@@ -255,7 +291,7 @@ class MoodRipplePlugin(Star):
             await asyncio.sleep(45)
 
     async def _tick(self) -> None:
-        now = datetime.now().astimezone()
+        now = self._scheduler_now()
         today = now.date().isoformat()
         await self.service.apply_daily_decay(today)
         yesterday = (now.date() - timedelta(days=1)).isoformat()
@@ -265,10 +301,23 @@ class MoodRipplePlugin(Star):
             self._journals_in_flight.add(yesterday)
             self._spawn(self._create_journal(yesterday))
         for event_id in await self._due_event_ids(now):
+            retry_after = self._event_retry_after.get(event_id)
+            if retry_after and self._scheduler_now() < retry_after:
+                continue
             event = await self.service.create_event(await self._anonymous_atmosphere())
             if not event:
-                logger.warning("MoodRipple event generation failed; it will retry on the next scheduler tick")
+                attempts = self._event_retry_attempts.get(event_id, 0) + 1
+                self._event_retry_attempts[event_id] = attempts
+                delay_seconds = min(900, 45 * (2 ** min(attempts - 1, 5)))
+                self._event_retry_after[event_id] = self._scheduler_now() + timedelta(seconds=delay_seconds)
+                logger.warning(
+                    "MoodRipple event generation failed; retry %d will wait %d seconds",
+                    attempts,
+                    delay_seconds,
+                )
                 continue
+            self._event_retry_attempts.pop(event_id, None)
+            self._event_retry_after.pop(event_id, None)
             await self.service.apply_event(event)
             self._spawn(self._sync_visual_status())
             await self._proactive_after_event(event)
@@ -278,9 +327,23 @@ class MoodRipplePlugin(Star):
         date_key = now.date().isoformat()
         state = await self.store.snapshot()
         planned = state.get("event_schedule", {}).get(date_key)
-        if planned is None:
+        signature = self._schedule_signature()
+        saved_signature = state.get("event_schedule_meta", {}).get(date_key)
+        if planned is None or saved_signature != signature:
             planned = self._make_daily_schedule(now)
-            await self.store.mutate(lambda current: current["event_schedule"].update({date_key: planned}))
+            def replace_schedule(current: dict[str, Any]) -> None:
+                current["event_schedule"][date_key] = planned
+                current["event_schedule_meta"][date_key] = signature
+                current["event_schedule"] = dict(list(current["event_schedule"].items())[-14:])
+                current["event_schedule_meta"] = dict(list(current["event_schedule_meta"].items())[-14:])
+
+            await self.store.mutate(replace_schedule)
+            logger.info(
+                "MoodRipple planned %d event(s) for %s in UTC%+g",
+                len(planned),
+                date_key,
+                self._scheduler_timezone_offset(),
+            )
         due: list[str] = []
         for item in planned:
             scheduled_at = self._parse_time(item.get("at", ""))
@@ -296,19 +359,49 @@ class MoodRipplePlugin(Star):
 
     def _make_daily_schedule(self, now: datetime) -> list[dict[str, Any]]:
         windows = [str(x) for x in self.config.get("event_time_windows", [])]
-        random.shuffle(windows)
-        count = min(max(0, int(self.config.get("max_daily_events", 2))), len(windows))
-        scheduled: list[dict[str, Any]] = []
-        for index, window in enumerate(windows[:count]):
+        available: list[tuple[int, datetime, datetime]] = []
+        for original_index, window in enumerate(windows):
             try:
                 start, end = (self._clock_to_datetime(now, value) for value in window.split("-", 1))
                 if end <= start:
-                    continue
-                at = start + (end - start) * random.random()
-                scheduled.append({"id": f"{now.date()}-{index}", "at": at.isoformat(timespec="seconds"), "done": False})
+                    raise ValueError("window end must be after start")
+                if end > now:
+                    available.append((original_index, max(start, now), end))
             except ValueError:
                 logger.warning("MoodRipple ignored invalid event time window: %s", window)
+        random.shuffle(available)
+        count = min(self._max_daily_events(), len(available))
+        scheduled: list[dict[str, Any]] = []
+        for original_index, start, end in available[:count]:
+            at = start + (end - start) * random.random()
+            scheduled.append({
+                "id": f"{now.date()}-{original_index}",
+                "at": at.isoformat(timespec="seconds"),
+                "done": False,
+            })
+        scheduled.sort(key=lambda item: str(item["at"]))
         return scheduled
+
+    def _scheduler_timezone_offset(self) -> float:
+        try:
+            value = float(self.config.get("scheduler_timezone_offset", 8))
+        except (TypeError, ValueError):
+            value = 8.0
+        return min(14.0, max(-12.0, value))
+
+    def _scheduler_now(self) -> datetime:
+        return datetime.now(timezone(timedelta(hours=self._scheduler_timezone_offset())))
+
+    def _max_daily_events(self) -> int:
+        try:
+            value = int(self.config.get("max_daily_events", 3))
+        except (TypeError, ValueError):
+            value = 3
+        return max(0, value)
+
+    def _schedule_signature(self) -> str:
+        windows = [str(item).strip() for item in self.config.get("event_time_windows", [])]
+        return f"{self._scheduler_timezone_offset():g}|{self._max_daily_events()}|{'|'.join(windows)}"
 
     def _clock_to_datetime(self, now: datetime, value: str) -> datetime:
         hour, minute = (int(part) for part in value.strip().split(":", 1))
@@ -343,16 +436,27 @@ class MoodRipplePlugin(Star):
         return summaries[-1] if summaries else ""
 
     async def _proactive_after_event(self, event: dict[str, Any]) -> None:
-        probability = min(1.0, max(0.0, float(self.config.get("proactive_probability", 0.35))))
+        probability = self._proactive_probability()
         if random.random() > probability:
             logger.info("MoodRipple proactive message skipped by probability setting")
             return
-        candidates = [str(item).strip() for item in self.config.get("proactive_user_ids", []) if str(item).strip()]
+        candidates = list(dict.fromkeys(
+            str(item).strip() for item in self.config.get("proactive_user_ids", []) if str(item).strip()
+        ))
         if not candidates:
             logger.warning("MoodRipple proactive message skipped because the proactive user list is empty")
             return
-        weights = [await self.service.proactive_weight(user_id) for user_id in candidates]
-        user_id = random.choices(candidates, weights=weights, k=1)[0]
+        state = await self.store.snapshot()
+        now = datetime.now().astimezone()
+        eligible = [
+            user_id for user_id in candidates
+            if not self._proactive_skip_reason(state.get("users", {}).get(user_id, {}), now, force=False)
+        ]
+        if not eligible:
+            logger.info("MoodRipple proactive message skipped because every listed user is active or cooling down")
+            return
+        weights = [await self.service.proactive_weight(user_id) for user_id in eligible]
+        user_id = random.choices(eligible, weights=weights, k=1)[0]
         outcome = await self._proactive_for_user(user_id, event)
         logger.info("MoodRipple proactive attempt finished: %s", outcome.split("：", 1)[0])
 
@@ -370,13 +474,9 @@ class MoodRipplePlugin(Star):
         except (KeyError, ValueError):
             return "主动路由模板无效：请检查 proactive_umo_template 配置。"
         now = datetime.now().astimezone()
-        last_seen = self._parse_time(user.get("last_seen", ""))
-        if last_seen and now - last_seen <= timedelta(minutes=20):
-            return "目标在最近 20 分钟内有消息，本次主动发送已取消。"
-        cooldown = timedelta(minutes=max(1, int(self.config.get("proactive_cooldown_minutes", 720))))
-        last_sent = self._parse_time(user.get("last_proactive_at", ""))
-        if not force and last_sent and now - last_sent < cooldown:
-            return "主动消息仍在冷却期内，本次未发送。"
+        skip_reason = self._proactive_skip_reason(user, now, force)
+        if skip_reason:
+            return skip_reason
         message = prepared_message or await self._proactive_message(event, user)
         if not message:
             return "主动消息未通过事件关联校验，本次未发送。"
@@ -406,12 +506,22 @@ class MoodRipplePlugin(Star):
 
     async def _submit_proactive_message(self, user_id: str, origin: str, message: str) -> tuple[bool, str, str]:
         failures = []
+        try:
+            timeout = float(self.config.get("proactive_send_timeout_seconds", 15))
+        except (TypeError, ValueError):
+            timeout = 15.0
+        timeout = min(60.0, max(3.0, timeout))
         for candidate in private_origin_candidates(origin, user_id, self._loaded_platform_ids()):
             try:
-                accepted = await self.context.send_message(candidate, MessageChain().message(message))
+                accepted = await asyncio.wait_for(
+                    self.context.send_message(candidate, MessageChain().message(message)),
+                    timeout=timeout,
+                )
                 if accepted:
                     return True, candidate, ""
                 failures.append(f"no platform for {candidate}")
+            except asyncio.TimeoutError:
+                failures.append(f"{candidate}: timed out after {timeout:g}s")
             except Exception as exc:
                 failures.append(f"{candidate}: {exc}")
         return False, origin, "; ".join(failures[-3:]) or "no private route candidates"
@@ -421,36 +531,54 @@ class MoodRipplePlugin(Star):
         origin = str(user.get("last_origin", "")).strip()
         context_excerpt = await self.service.ai.recent_context_for_origin(origin) if origin else ""
         event_text = str(event.get("summary", "")).strip()
-        event_anchor = self._event_anchor(event_text)
-        if not event_anchor:
+        seed = str(event.get("proactive_seed", "")).strip()
+        if not event_text or not seed:
             return None
+        if not context_excerpt and not str(user.get("relationship", "")).strip():
+            return seed[:180]
         result = await self.service.ai.json(
-            "生成一条克制、自然、不施压的中文主动消息。当前 event 是绝对最高优先级和唯一话题来源；"
-            "没有 event 就不应发送这条消息。目标用户完全不知道该 event，也看不到任何内部事件、心情或上下文，"
-            "所以最终 message 必须是直接对用户说的话：先用一小句让对方听懂事件带来的缘由或画面，"
-            "再明确向对方抛出一个具体、容易回答且可继续聊下去的问题、选择或邀请。"
-            "message 绝不能只是内心独白、微日记、事件复述、感叹或对 event 的自顾自反应；"
-            "不要假定对方已经知道发生了什么，也不要只说‘我刚刚怎样了’后就结束。"
-            "event_anchor 已由系统从 event 中选定。message 必须原样包含它，将它自然编入面向用户的开场语境，并围绕它提问。"
-            "目标用户上下文只能帮助选择合适的语气和接话角度，心情与关系只能调节措辞，绝不能改变、替代或稀释事件。"
-            "禁止泛用问候、无关分享，或使用任何陌生人样本。根据情境选择关怀、分享、轻微求助或话题延续之一。"
-            "不得透露内部数值、好感度、用户资料、系统或评估机制。返回 JSON："
-            '{"message": "直接对用户说，含 event_anchor、清楚缘由和引导式话题，最多90字"}。输入：'
-            + str({"target_context": context_excerpt, "event": event_text, "event_anchor": event_anchor, "topic": event.get("topic_intent", ""), "mood": state["mood"], "relationship": user.get("relationship", ""), "affection": user.get("affection", 0)})
+            "你只负责轻微润色一条已经写好的主动私聊开场。original_seed 与 event 是不可改写的事实主线，"
+            "权重远高于用户上下文、关系和心情；必须保留 original_seed 中的具体事情、悬念或冲突以及核心问题，"
+            "不得另造事件、换话题或只对事件作感叹。收件人完全不知道内部 event，最终 message 必须独立可懂，"
+            "先交代发生了什么，再把明确的问题、二选一或邀请直接抛给收件人。"
+            "target_context 只来自当前收件人自己的近期对话，仅可用来避免重复并微调口吻；"
+            "它不能补写事实、抢占主题或让消息变成上次对话的续写。关系和心情也只能调节亲疏与语气。"
+            "不得提及提示词、内部事件、数值、好感度、系统或陌生人。若无法安全润色，原样返回 original_seed。"
+            "只返回 JSON："
+            '{"message": "直接对收件人说的完整消息，最多90字", "uses_event": true}。输入：'
+            + str({
+                "original_seed": seed,
+                "event": event_text,
+                "topic": event.get("topic_intent", ""),
+                "target_context": context_excerpt,
+                "mood": state["mood"],
+                "relationship": user.get("relationship", ""),
+                "affection": user.get("affection", 0),
+            })
         )
         text = str(result.get("message", "")).strip() if result else ""
-        if event_anchor in text:
+        if result and result.get("uses_event") is True and text:
             return text[:180]
-        if result is None:
-            return None
-        topic = str(event.get("topic_intent", "")).strip()
-        question = topic or "你会怎么想？"
-        return f"{event_anchor}。我想听听你的看法：{question}"[:180]
+        return seed[:180]
 
-    @staticmethod
-    def _event_anchor(event_text: str) -> str:
-        compact = "".join(event_text.split())
-        return compact[:16].rstrip("，。！？；：、") if len(compact) >= 2 else ""
+    def _proactive_probability(self) -> float:
+        try:
+            value = float(self.config.get("proactive_probability", 1.0))
+        except (TypeError, ValueError):
+            value = 1.0
+        return min(1.0, max(0.0, value))
+
+    def _proactive_skip_reason(self, user: dict[str, Any], now: datetime, force: bool) -> str | None:
+        last_seen = self._parse_time(user.get("last_seen", ""))
+        if last_seen and now - last_seen <= timedelta(minutes=20):
+            return "目标在最近 20 分钟内有消息，本次主动发送已取消。"
+        if force:
+            return None
+        cooldown = timedelta(minutes=max(1, int(self.config.get("proactive_cooldown_minutes", 720))))
+        last_sent = self._parse_time(user.get("last_proactive_at", ""))
+        if last_sent and now - last_sent < cooldown:
+            return "主动消息仍在冷却期内，本次未发送。"
+        return None
 
     async def _sync_visual_status(self) -> None:
         """Best-effort bridge for adapters that explicitly expose a bot-status API."""

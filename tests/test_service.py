@@ -16,7 +16,12 @@ class FakeAI:
     async def json(self, prompt):
         self.prompts.append(prompt)
         if "独立个体的近况写作者" in prompt:
-            return {"description": "测试网络事件", "delta": 12, "topic_intent": "询问对方会如何回应"}
+            return {
+                "description": "测试网络事件",
+                "delta": 12,
+                "topic_intent": "如果是你，会保留哪一个版本？",
+                "proactive_seed": "我刚改完两版头像，朋友们的意见正好各占一半。换你来选，会留更俏皮的还是更安静的那版？",
+            }
         return {"labels": ["清醒", "期待"]}
 
     def default_persona_context(self):
@@ -58,7 +63,7 @@ class ReferenceAI(MoodAI):
 
     async def json(self, prompt):
         self.prompts.append(prompt)
-        return {"summary": "匿名的轻松互动倾向"}
+        return {"summaries": ["匿名的轻松互动倾向"]}
 
 
 class JsonResponseTests(unittest.IsolatedAsyncioTestCase):
@@ -149,11 +154,15 @@ class DebugServiceTests(unittest.IsolatedAsyncioTestCase):
             await store.mutate(lambda state: state["events"].append({"at": "2026-07-11T20:00:00+08:00", "type": "daily_event", "summary": "上一件事件"}))
             generated = await service.create_event()
             self.assertEqual(generated["summary"], "测试网络事件")
+            self.assertIn("换你来选", generated["proactive_seed"])
             self.assertIn("测试人格", ai.prompts[-1])
             self.assertIn("独立个体", ai.prompts[-1])
             self.assertIn("bot_persona", ai.prompts[-1])
             self.assertIn("话题引子", ai.prompts[-1])
             self.assertIn("线上社交场景", ai.prompts[-1])
+            self.assertIn("明确触发物", ai.prompts[-1])
+            self.assertIn("意外的转折", ai.prompts[-1])
+            self.assertIn("proactive_seed", ai.prompts[-1])
             self.assertIn("stranger_reference_samples", ai.prompts[-1])
             self.assertIn("上一件事件", ai.prompts[-1])
             self.assertIn("current_mood", ai.prompts[-1])

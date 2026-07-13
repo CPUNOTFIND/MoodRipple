@@ -31,6 +31,7 @@ class StateStore:
             "last_decay_date": "",
             "events": [],
             "event_schedule": {},
+            "event_schedule_meta": {},
             "daily_stats": {},
             "topic_queue": [],
             "proactive_records": [],
@@ -59,7 +60,7 @@ class StateStore:
         for key in ("events", "labels", "journals", "topic_queue", "proactive_records", "milestones"):
             if not isinstance(state.get(key), list):
                 state[key] = []
-        for key in ("users", "groups", "event_schedule", "daily_stats"):
+        for key in ("users", "groups", "event_schedule", "event_schedule_meta", "daily_stats"):
             if not isinstance(state.get(key), dict):
                 state[key] = {}
         return state
