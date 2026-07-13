@@ -17,10 +17,12 @@ class FakeAI:
         self.prompts.append(prompt)
         if "独立个体的近况写作者" in prompt:
             return {
-                "description": "测试网络事件",
+                "description": "我把同一句个人签名改成了俏皮和安静两版，来回预览后反而更难决定该留下哪一版。",
                 "delta": 12,
                 "topic_intent": "如果是你，会保留哪一个版本？",
-                "proactive_seed": "我刚改完两版头像，朋友们的意见正好各占一半。换你来选，会留更俏皮的还是更安静的那版？",
+                "proactive_seed": "我刚把个人签名改成了俏皮和安静两版，来回预览后反而选不出了。换你来选，会留哪一版？",
+                "self_centered": True,
+                "recipient_assumption": False,
             }
         return {"labels": ["清醒", "期待"]}
 
@@ -153,7 +155,7 @@ class DebugServiceTests(unittest.IsolatedAsyncioTestCase):
             service = MoodService(store, ai, {})
             await store.mutate(lambda state: state["events"].append({"at": "2026-07-11T20:00:00+08:00", "type": "daily_event", "summary": "上一件事件"}))
             generated = await service.create_event()
-            self.assertEqual(generated["summary"], "测试网络事件")
+            self.assertIn("个人签名", generated["summary"])
             self.assertIn("换你来选", generated["proactive_seed"])
             self.assertIn("测试人格", ai.prompts[-1])
             self.assertIn("独立个体", ai.prompts[-1])
@@ -163,6 +165,24 @@ class DebugServiceTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("明确触发物", ai.prompts[-1])
             self.assertIn("意外的转折", ai.prompts[-1])
             self.assertIn("proactive_seed", ai.prompts[-1])
+            self.assertIn("唯一行动核心", ai.prompts[-1])
+            self.assertIn("禁止虚构任何第三方", ai.prompts[-1])
+            self.assertIn("尚未选定收件人", ai.prompts[-1])
+            self.assertIn("self_centered", ai.prompts[-1])
             self.assertIn("stranger_reference_samples", ai.prompts[-1])
             self.assertIn("上一件事件", ai.prompts[-1])
             self.assertIn("current_mood", ai.prompts[-1])
+
+    async def test_event_is_rejected_when_model_does_not_confirm_self_centered_boundaries(self):
+        class BoundaryBreakingAI(FakeAI):
+            async def json(self, prompt):
+                result = await super().json(prompt)
+                if "独立个体的近况写作者" in prompt:
+                    result["self_centered"] = False
+                return result
+
+        with tempfile.TemporaryDirectory() as directory:
+            store = StateStore(Path(directory) / "state.json", 0)
+            await store.load()
+            service = MoodService(store, BoundaryBreakingAI(), {})
+            self.assertIsNone(await service.create_event())

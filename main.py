@@ -19,7 +19,7 @@ from .moodripple.service import MoodService, now_iso
 from .moodripple.store import StateStore
 
 
-@register("moodripple", "MoodRipple contributors", "全局心情、关系记忆与克制主动回复", "1.3.0")
+@register("moodripple", "MoodRipple contributors", "全局心情、关系记忆与克制主动回复", "1.3.1")
 class MoodRipplePlugin(Star):
     """A non-invasive emotional layer; it never replaces the configured persona."""
 
@@ -543,6 +543,7 @@ class MoodRipplePlugin(Star):
             "先交代发生了什么，再把明确的问题、二选一或邀请直接抛给收件人。"
             "target_context 只来自当前收件人自己的近期对话，仅可用来避免重复并微调口吻；"
             "它不能补写事实、抢占主题或让消息变成上次对话的续写。关系和心情也只能调节亲疏与语气。"
+            "绝不能把收件人写成 event 的参与者、知情者或起因，也不能声称收件人曾经说过、做过或答应过任何事情。"
             "不得提及提示词、内部事件、数值、好感度、系统或陌生人。若无法安全润色，原样返回 original_seed。"
             "只返回 JSON："
             '{"message": "直接对收件人说的完整消息，最多90字", "uses_event": true}。输入：'
