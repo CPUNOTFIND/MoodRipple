@@ -5,7 +5,7 @@ from pathlib import Path
 
 from moodripple.ai import MoodAI
 from moodripple.routing import is_direct_friend_origin, private_origin, private_origin_candidates
-from moodripple.service import MoodService, affection_delta
+from moodripple.service import MoodService, affection_delta, select_proactive_targets
 from moodripple.store import StateStore
 
 
@@ -39,6 +39,22 @@ class AffectionCurveTests(unittest.TestCase):
         edge = affection_delta(10, 95, 1.0, 0.75)
         self.assertGreater(middle, edge)
         self.assertGreater(edge, 0)
+
+
+class ProactiveProbabilityTests(unittest.TestCase):
+    def test_probability_is_rolled_independently_for_every_eligible_user(self):
+        rolls = iter([0.1, 0.8, 0.49, 0.5])
+        selected = select_proactive_targets(
+            ["10001", "10002", "10003", "10004"],
+            0.5,
+            lambda: next(rolls),
+        )
+        self.assertEqual(selected, ["10001", "10003"])
+
+    def test_probability_boundaries_apply_to_the_whole_eligible_list(self):
+        users = ["10001", "10002", "10003"]
+        self.assertEqual(select_proactive_targets(users, 0, lambda: 0.1), [])
+        self.assertEqual(select_proactive_targets(users, 1, lambda: 0.99), users)
 
 
 class RoutingTests(unittest.TestCase):

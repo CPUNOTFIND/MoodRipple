@@ -15,11 +15,11 @@ from astrbot.api.star import Context, Star, register
 
 from .moodripple.ai import MoodAI
 from .moodripple.routing import private_origin, private_origin_candidates
-from .moodripple.service import MoodService, now_iso
+from .moodripple.service import MoodService, now_iso, select_proactive_targets
 from .moodripple.store import StateStore
 
 
-@register("moodripple", "MoodRipple contributors", "全局心情、关系记忆与克制主动回复", "1.3.1")
+@register("moodripple", "MoodRipple contributors", "全局心情、关系记忆与克制主动回复", "1.3.2")
 class MoodRipplePlugin(Star):
     """A non-invasive emotional layer; it never replaces the configured persona."""
 
@@ -437,9 +437,6 @@ class MoodRipplePlugin(Star):
 
     async def _proactive_after_event(self, event: dict[str, Any]) -> None:
         probability = self._proactive_probability()
-        if random.random() > probability:
-            logger.info("MoodRipple proactive message skipped by probability setting")
-            return
         candidates = list(dict.fromkeys(
             str(item).strip() for item in self.config.get("proactive_user_ids", []) if str(item).strip()
         ))
@@ -455,10 +452,30 @@ class MoodRipplePlugin(Star):
         if not eligible:
             logger.info("MoodRipple proactive message skipped because every listed user is active or cooling down")
             return
-        weights = [await self.service.proactive_weight(user_id) for user_id in eligible]
-        user_id = random.choices(eligible, weights=weights, k=1)[0]
-        outcome = await self._proactive_for_user(user_id, event)
-        logger.info("MoodRipple proactive attempt finished: %s", outcome.split("：", 1)[0])
+        selected = select_proactive_targets(eligible, probability)
+        logger.info(
+            "MoodRipple proactive batch evaluated %d listed user(s): %d eligible, %d selected at %.0f%% probability",
+            len(candidates),
+            len(eligible),
+            len(selected),
+            probability * 100,
+        )
+        if not selected:
+            return
+        interval = self._proactive_batch_interval()
+        submitted = 0
+        for index, user_id in enumerate(selected):
+            outcome = await self._proactive_for_user(user_id, event)
+            if outcome.startswith("已向 "):
+                submitted += 1
+            logger.info("MoodRipple proactive target %s: %s", user_id, outcome)
+            if index + 1 < len(selected):
+                await asyncio.sleep(interval)
+        logger.info(
+            "MoodRipple proactive batch finished: %d selected, %d submitted",
+            len(selected),
+            submitted,
+        )
 
     async def _proactive_for_user(
         self, user_id: str, event: dict[str, Any], force: bool = False, prepared_message: str | None = None

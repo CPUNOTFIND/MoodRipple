@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import random
+from collections.abc import Callable
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -19,6 +20,14 @@ def affection_delta(raw_delta: float, current: float, sensitivity: float, dampin
     remaining = max(0.0, 1.0 - abs(current) / 100.0)
     curve = remaining ** max(0.05, damping)
     return raw_delta * max(0.05, sensitivity) * curve
+
+
+def select_proactive_targets(
+    user_ids: list[str], probability: float, draw: Callable[[], float] = random.random
+) -> list[str]:
+    """Roll the configured probability independently for every eligible user."""
+    threshold = min(1.0, max(0.0, probability))
+    return [user_id for user_id in user_ids if draw() < threshold]
 
 
 class MoodService:
